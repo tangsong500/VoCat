@@ -1155,6 +1155,7 @@ func newVoWiFiOrchestrator(
 	if apn == "" {
 		apn = "ims"
 	}
+	logger.Info("VERIFY tunnel APN resolved", "device_id", deviceConfig.ID, "tunnel_apn", apn, "device_data_apn", deviceConfig.APN)
 	vowifiLogger := logger.With("category", "vowifi", "device_id", deviceConfig.ID)
 	tunnelProvider, err := ike.NewProvider(ike.Config{
 		APN: apn, Logger: vowifiLogger, AutoProposalFallback: true,
