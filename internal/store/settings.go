@@ -247,6 +247,28 @@ func (s *Store) UpsertAppSetting(ctx context.Context, value AppSetting) error {
 	return nil
 }
 
+// UpsertAppSettings persists multiple settings in one transaction so a request
+// that supplies several values can never leave a partial update behind.
+func (s *Store) UpsertAppSettings(ctx context.Context, values []AppSetting) error {
+	if len(values) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin app settings update: %w", err)
+	}
+	defer tx.Rollback()
+	for _, value := range values {
+		if err := upsertAppSetting(ctx, tx, value); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit app settings update: %w", err)
+	}
+	return nil
+}
+
 func upsertAppSetting(
 	ctx context.Context,
 	executor contextQueryExecer,

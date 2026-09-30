@@ -16,8 +16,8 @@ func TestVoWiFiSettingsExposeAndPersistIMSAPN(t *testing.T) {
 		t.Fatalf("GET status = %d, body = %s", recorder.Code, recorder.Body)
 	}
 	data, _ := decodeSettingsResponse(t, recorder)["data"].(map[string]any)
-	if data["ims_apn"] != "ims" {
-		t.Fatalf("default ims_apn = %#v, want ims", data["ims_apn"])
+	if data["ims_apn"] != "ims" || data["mtu_compatibility"] != false {
+		t.Fatalf("default settings = %#v", data)
 	}
 
 	recorder = test.request(t, http.MethodPut, "/api/settings/vowifi", `{"ims_apn":"operator.ims"}`)
@@ -37,6 +37,17 @@ func TestVoWiFiSettingsExposeAndPersistIMSAPN(t *testing.T) {
 	data, _ = decodeSettingsResponse(t, recorder)["data"].(map[string]any)
 	if data["mtu_compatibility"] != true || data["ims_apn"] != "operator.ims" {
 		t.Fatalf("settings after MTU update = %#v", data)
+	}
+
+	// A request that mixes a valid and an invalid value must be rejected without
+	// persisting either of them.
+	recorder = test.request(t, http.MethodPut, "/api/settings/vowifi", `{"mtu_compatibility":false,"ims_apn":"bad apn"}`)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("mixed PUT status = %d, want 400, body = %s", recorder.Code, recorder.Body)
+	}
+	data, _ = decodeSettingsResponse(t, test.request(t, http.MethodGet, "/api/settings/vowifi", ""))["data"].(map[string]any)
+	if data["mtu_compatibility"] != true || data["ims_apn"] != "operator.ims" {
+		t.Fatalf("rejected request changed settings: %#v", data)
 	}
 
 	for _, body := range []string{`{"ims_apn":"bad apn"}`, `{}`} {

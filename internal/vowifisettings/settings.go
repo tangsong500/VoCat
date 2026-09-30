@@ -18,6 +18,9 @@ const (
 	DefaultIMSAPN = "ims"
 )
 
+// ErrInvalidIMSAPN reports a malformed IMS APN before anything is persisted.
+var ErrInvalidIMSAPN = errors.New("IMS APN must contain only letters, digits, dots, underscores, or hyphens")
+
 // imsAPNPattern matches the modem/card APN charset so the value can be used
 // as an IKE IDr FQDN without escaping.
 var imsAPNPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$`)
@@ -38,11 +41,7 @@ func MTUCompatibility(ctx context.Context, database *store.Store) bool {
 }
 
 func SetMTUCompatibility(ctx context.Context, database *store.Store, enabled bool) error {
-	value, err := json.Marshal(map[string]bool{"enabled": enabled})
-	if err != nil {
-		return err
-	}
-	return database.UpsertAppSetting(ctx, store.AppSetting{Key: MTUCompatibilityKey, Value: value})
+	return ApplyUpdate(ctx, database, Update{MTUCompatibility: &enabled})
 }
 
 // IMSAPN returns the dedicated APN used by the VoWiFi (ePDG/IKE) tunnel.
@@ -63,26 +62,65 @@ func IMSAPN(ctx context.Context, database *store.Store) string {
 	if json.Unmarshal(setting.Value, &value) != nil {
 		return DefaultIMSAPN
 	}
-	apn := strings.TrimSpace(value.APN)
-	if !imsAPNPattern.MatchString(apn) {
+	apn, err := NormalizeIMSAPN(value.APN)
+	if err != nil {
 		return DefaultIMSAPN
 	}
 	return apn
 }
 
+// NormalizeIMSAPN trims and validates a configured IMS APN. An empty value
+// restores DefaultIMSAPN; invalid values return ErrInvalidIMSAPN.
+func NormalizeIMSAPN(apn string) (string, error) {
+	apn = strings.TrimSpace(apn)
+	if apn == "" {
+		return DefaultIMSAPN, nil
+	}
+	if !imsAPNPattern.MatchString(apn) {
+		return "", ErrInvalidIMSAPN
+	}
+	return apn, nil
+}
+
 // SetIMSAPN persists the dedicated IMS APN used by the VoWiFi tunnel. An empty
 // value restores DefaultIMSAPN.
 func SetIMSAPN(ctx context.Context, database *store.Store, apn string) error {
-	apn = strings.TrimSpace(apn)
-	if apn == "" {
-		apn = DefaultIMSAPN
+	return ApplyUpdate(ctx, database, Update{IMSAPN: &apn})
+}
+
+// Update carries the VoWiFi settings supplied by one request. Nil fields are
+// left unchanged.
+type Update struct {
+	MTUCompatibility *bool
+	IMSAPN           *string
+}
+
+// ApplyUpdate validates every supplied setting first, then persists them in a
+// single transaction. A rejected request therefore never writes a valid field
+// from the same request, and a persistence failure never leaves a partial
+// update behind.
+func ApplyUpdate(ctx context.Context, database *store.Store, update Update) error {
+	values := make([]store.AppSetting, 0, 2)
+	if update.MTUCompatibility != nil {
+		value, err := json.Marshal(map[string]bool{"enabled": *update.MTUCompatibility})
+		if err != nil {
+			return err
+		}
+		values = append(values, store.AppSetting{Key: MTUCompatibilityKey, Value: value})
 	}
-	if !imsAPNPattern.MatchString(apn) {
-		return errors.New("IMS APN must contain only letters, digits, dots, underscores, or hyphens")
+	if update.IMSAPN != nil {
+		apn, err := NormalizeIMSAPN(*update.IMSAPN)
+		if err != nil {
+			return err
+		}
+		value, err := json.Marshal(map[string]string{"apn": apn})
+		if err != nil {
+			return err
+		}
+		values = append(values, store.AppSetting{Key: IMSAPNKey, Value: value})
 	}
-	value, err := json.Marshal(map[string]string{"apn": apn})
-	if err != nil {
-		return err
+	if len(values) == 0 {
+		return nil
 	}
-	return database.UpsertAppSetting(ctx, store.AppSetting{Key: IMSAPNKey, Value: value})
+	return database.UpsertAppSettings(ctx, values)
 }

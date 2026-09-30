@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"vocat/internal/vowifisettings"
 )
@@ -21,18 +22,25 @@ func (s *Server) handleVoWiFiSettings(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_request", "at least one VoWiFi setting is required")
 			return
 		}
-		if request.MTUCompatibility != nil {
-			if err := vowifisettings.SetMTUCompatibility(r.Context(), s.store, *request.MTUCompatibility); err != nil {
-				s.writeStoreError(w, err)
-				return
-			}
-			s.recordAudit(r.Context(), "admin", "settings.vowifi.mtu_compatibility", "settings", "vowifi", "success", "VoWiFi MTU compatibility updated")
-		}
-		if request.IMSAPN != nil {
-			if err := vowifisettings.SetIMSAPN(r.Context(), s.store, *request.IMSAPN); err != nil {
+		// Validate every supplied value before persisting any of them, and write
+		// the accepted values in one transaction so a rejected request cannot
+		// change a single setting.
+		err := vowifisettings.ApplyUpdate(r.Context(), s.store, vowifisettings.Update{
+			MTUCompatibility: request.MTUCompatibility,
+			IMSAPN:           request.IMSAPN,
+		})
+		if err != nil {
+			if errors.Is(err, vowifisettings.ErrInvalidIMSAPN) {
 				writeError(w, http.StatusBadRequest, "invalid_ims_apn", err.Error())
 				return
 			}
+			s.writeStoreError(w, err)
+			return
+		}
+		if request.MTUCompatibility != nil {
+			s.recordAudit(r.Context(), "admin", "settings.vowifi.mtu_compatibility", "settings", "vowifi", "success", "VoWiFi MTU compatibility updated")
+		}
+		if request.IMSAPN != nil {
 			s.recordAudit(r.Context(), "admin", "settings.vowifi.ims_apn", "settings", "vowifi", "success", "VoWiFi IMS APN updated")
 		}
 	default:

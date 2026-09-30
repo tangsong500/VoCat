@@ -2,6 +2,7 @@ package vowifisettings
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -59,11 +60,67 @@ func TestSetIMSAPNRoundTripsAndRejectsInvalidValues(t *testing.T) {
 		t.Fatalf("IMSAPN after SetIMSAPN = %q, want %q", got, "operator.ims")
 	}
 	for _, invalid := range []string{"bad apn", "a/b", "apn:@", strings.Repeat("x", 101)} {
-		if err := SetIMSAPN(ctx, database, invalid); err == nil {
-			t.Fatalf("SetIMSAPN(%q) accepted an invalid APN", invalid)
+		err := SetIMSAPN(ctx, database, invalid)
+		if !errors.Is(err, ErrInvalidIMSAPN) {
+			t.Fatalf("SetIMSAPN(%q) error = %v, want ErrInvalidIMSAPN", invalid, err)
 		}
 	}
 	if got := IMSAPN(ctx, database); got != "operator.ims" {
 		t.Fatalf("IMSAPN changed after rejected values = %q", got)
+	}
+}
+
+func TestSetMTUCompatibilityRoundTrips(t *testing.T) {
+	ctx := context.Background()
+	database := openTestStore(t)
+	if err := SetMTUCompatibility(ctx, database, true); err != nil {
+		t.Fatal(err)
+	}
+	if !MTUCompatibility(ctx, database) {
+		t.Fatal("MTU compatibility was not persisted")
+	}
+	if err := SetMTUCompatibility(ctx, database, false); err != nil {
+		t.Fatal(err)
+	}
+	if MTUCompatibility(ctx, database) {
+		t.Fatal("MTU compatibility was not cleared")
+	}
+}
+
+func TestApplyUpdatePersistsBothSettings(t *testing.T) {
+	ctx := context.Background()
+	database := openTestStore(t)
+	enabled := true
+	apn := "operator.ims"
+	if err := ApplyUpdate(ctx, database, Update{MTUCompatibility: &enabled, IMSAPN: &apn}); err != nil {
+		t.Fatal(err)
+	}
+	if !MTUCompatibility(ctx, database) {
+		t.Fatal("MTU compatibility was not persisted")
+	}
+	if got := IMSAPN(ctx, database); got != "operator.ims" {
+		t.Fatalf("IMSAPN after ApplyUpdate = %q", got)
+	}
+}
+
+// TestApplyUpdateValidatesBeforeWriting rejects a mixed request without
+// persisting the valid field it carried.
+func TestApplyUpdateValidatesBeforeWriting(t *testing.T) {
+	ctx := context.Background()
+	database := openTestStore(t)
+	if err := SetIMSAPN(ctx, database, "operator.ims"); err != nil {
+		t.Fatal(err)
+	}
+	enabled := true
+	invalid := "bad apn"
+	err := ApplyUpdate(ctx, database, Update{MTUCompatibility: &enabled, IMSAPN: &invalid})
+	if !errors.Is(err, ErrInvalidIMSAPN) {
+		t.Fatalf("ApplyUpdate error = %v, want ErrInvalidIMSAPN", err)
+	}
+	if MTUCompatibility(ctx, database) {
+		t.Fatal("rejected request persisted mtu_compatibility")
+	}
+	if got := IMSAPN(ctx, database); got != "operator.ims" {
+		t.Fatalf("IMSAPN after rejected request = %q, want operator.ims", got)
 	}
 }
