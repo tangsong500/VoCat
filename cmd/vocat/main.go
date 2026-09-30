@@ -1155,6 +1155,7 @@ func newVoWiFiOrchestrator(
 	// The ePDG tunnel is an IMS service: request the dedicated IMS APN and never
 	// the cellular data APN cached on the device or card policy.
 	apn := vowifisettings.IMSAPN(ctx, database)
+	logger.Info("VERIFY tunnel APN resolved", "device_id", deviceConfig.ID, "tunnel_apn", apn, "device_data_apn", deviceConfig.APN)
 	vowifiLogger := logger.With("category", "vowifi", "device_id", deviceConfig.ID)
 	tunnelProvider, err := ike.NewProvider(ike.Config{
 		APN: apn, Logger: vowifiLogger, AutoProposalFallback: true,
